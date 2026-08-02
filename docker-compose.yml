@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: pinnacle-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pinnacle
+      POSTGRES_USER: pinnacle
+      POSTGRES_PASSWORD: pinnacle_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pinnacle-pg-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pinnacle -d pinnacle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pinnacle-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - pinnacle-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pinnacle-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/pinnacle
+      SPRING_DATASOURCE_USERNAME: pinnacle
+      SPRING_DATASOURCE_PASSWORD: pinnacle_dev_password
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      CLERK_ISSUER: ${CLERK_ISSUER}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      MARKET_DATA_API_KEY: ${MARKET_DATA_API_KEY:-}
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-twelvedata}
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pinnacle-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8080
+      VITE_WS_BASE_URL: ws://localhost:8080/ws
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
+    ports:
+      - "5173:5173"
+
+volumes:
+  pinnacle-pg-data:
+  pinnacle-redis-data:
